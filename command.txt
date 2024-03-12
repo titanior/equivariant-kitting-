@@ -1,0 +1,1 @@
+python3 ./scripts/main.py --log_pre="PATH_TO_SAVE_THE_LOG" --step_eps=0 --init_eps=0 --render=t --train_tau=0.002 --training_offset=10000 --load_model_pre="PATH_TO_THE_MODEL" --ADITTIONAL_PARAMETERS_FOR_YOUR_MODEL --is_test True
