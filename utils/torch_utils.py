@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
 is_real_world = False
 if is_real_world:
     import kornia as K
@@ -332,6 +333,8 @@ def get_random_image_transform_params(image_size, theta_dis_n=32, trans_sigma=-1
 def perturbBoundingAction(current_image, next_image, pixels, set_theta_zero=False, theta_dis_n=32):
     """Data augmentation on images."""
     image_size = current_image.shape[:2]
+    print("image_size",image_size)
+    print("current_size",current_image.shape)
     pixels[0] += np.array((action2obs_offset, action2obs_offset))
     nppixels = np.array(pixels)
     bbox_current = [np.maximum(nppixels[:, 0] - 5, action2obs_offset)[0],
@@ -422,6 +425,118 @@ def perturbBoundingAction(current_image, next_image, pixels, set_theta_zero=Fals
     return current_image, next_image, new_pixels, new_rounded_pixels, transform_params
 
 
+def perturbBoundingAction1(current_image, next_image, pixels, set_theta_zero=False, theta_dis_n=32):
+    """Data augmentation on images."""
+    image_size = current_image.shape[1:3]
+    plt.subplot(2, 2, 1)
+    plt.imshow(current_image[3,:,:],cmap="gray")
+ 
+    print("image_size",image_size)
+    print("current_size",current_image.shape)
+    pixels[0] += np.array((action2obs_offset, action2obs_offset))
+    nppixels = np.array(pixels)
+    bbox_current = [np.maximum(nppixels[:, 0] - 5, action2obs_offset)[0],
+                    np.minimum(nppixels[:, 0] + 5, image_size[0] - action2obs_offset - 1)[0],
+                    np.maximum(nppixels[:, 1] - 5, action2obs_offset)[0],
+                    np.minimum(nppixels[:, 1] + 5, image_size[1] - action2obs_offset - 1)[0]]
+
+    if np.any(np.array([bbox_current[1], bbox_current[0], bbox_current[3], bbox_current[2]])
+              > image_size[0] - action2obs_offset - 5) or \
+            np.any(np.array([bbox_current[1], bbox_current[0], bbox_current[3], bbox_current[2]])
+                   < action2obs_offset + 5):
+        theta_range = 'set_theta_zero'
+    elif np.any(np.array([bbox_current[1], bbox_current[0], bbox_current[3], bbox_current[2]])
+                > image_size[0] - action2obs_offset - 10) or \
+            np.any(np.array([bbox_current[1], bbox_current[0], bbox_current[3], bbox_current[2]])
+                   < action2obs_offset + 10):
+        theta_range = 'small_range'
+    else:
+        theta_range = None
+
+    pixels.extend([np.array([bbox_current[0], bbox_current[2]]),
+                   np.array([bbox_current[0], bbox_current[3]]),
+                   np.array([bbox_current[1], bbox_current[2]]),
+                   np.array([bbox_current[1], bbox_current[3]])])
+
+    # Compute random rigid transform.
+    while True:
+        theta, trans, pivot = get_random_image_transform_params(image_size, theta_dis_n, theta_range=theta_range)
+        transform = get_image_transform(theta, trans, pivot)
+        transform_params = theta, trans, pivot
+
+        # Ensure pixels remain in the image after transform.
+        is_valid = True
+        new_pixels = []
+        new_rounded_pixels = []
+        for pixel in pixels:
+            pixel = np.float32([pixel[1], pixel[0], 1.]).reshape(3, 1)
+
+            rounded_pixel = np.int32(np.round(transform @ pixel))[:2].squeeze()
+            rounded_pixel = np.flip(rounded_pixel)
+
+            pixel = (transform @ pixel)[:2].squeeze()
+            pixel = np.flip(pixel)
+
+            if action_mask == 'square':
+                in_fov_rounded = rounded_pixel[0] < image_size[0] - action2obs_offset and \
+                                 rounded_pixel[1] < image_size[0] - action2obs_offset
+                in_fov = pixel[0] < image_size[0] - action2obs_offset and \
+                         pixel[1] < image_size[0] - action2obs_offset
+                is_valid = is_valid and np.all(rounded_pixel >= action2obs_offset) and np.all(
+                    pixel >= action2obs_offset) and in_fov_rounded and in_fov
+            else:
+                raise NotImplementedError
+
+            new_pixels.append(pixel - np.array((action2obs_offset, action2obs_offset)))
+            new_rounded_pixels.append(rounded_pixel - np.array((action2obs_offset, action2obs_offset)))
+        if is_valid:
+            break
+
+    new_pixels = new_pixels[:-4]
+    new_rounded_pixels = new_rounded_pixels[:-4]
+
+    # Apply rigid transform to image and pixel labels.
+    if is_real_world:
+        # kornia/pytorch version
+        transform = torch.tensor(transform[:2, :], dtype=torch.float32).unsqueeze(0)
+        current_image = K.warp_affine(current_image.unsqueeze(0).unsqueeze(0),
+                                      transform, (image_size[1], image_size[0]),
+                                      mode='nearest', padding_mode='border', align_corners=True)
+        current_image = current_image.squeeze(0).squeeze(0).numpy()
+        if next_image is not None:
+            next_image = K.warp_affine(next_image.unsqueeze(0).unsqueeze(0),
+                                       transform, (image_size[1], image_size[0]),
+                                       mode='nearest', padding_mode='border', align_corners=True)
+        next_image = next_image.squeeze(0).squeeze(0).numpy()
+    else:
+        # cv2 version
+        current_image = current_image.permute(1,2,0)
+        next_image = next_image.permute(1,2,0)
+        plt.subplot(2,2, 2)
+        plt.imshow(current_image[:,:,0:3].numpy().astype(int))
+        
+        print("cv2 version")
+        current_image = cv2.warpAffine(
+            current_image.numpy(),
+            transform[:2, :], (image_size[1], image_size[0]),
+            flags=cv2.INTER_NEAREST)
+        if next_image is not None:
+            next_image = cv2.warpAffine(
+                next_image.numpy(),
+                transform[:2, :], (image_size[1], image_size[0]),
+                flags=cv2.INTER_NEAREST)
+        plt.subplot(2, 2, 3)
+        plt.imshow(current_image[:,:,3],cmap="gray")
+        plt.subplot(2, 2, 4)
+        plt.imshow(current_image[:,:,0:3].astype(int))
+        # plt.show()
+        current_image = torch.from_numpy(current_image).permute(2,0,1).numpy()
+        next_image = torch.from_numpy(next_image).permute(2,0,1).numpy()
+
+    return current_image, next_image, new_pixels, new_rounded_pixels, transform_params
+
+
+
 def augmentData2Buffer(buffer, d, rzs, aug_n, rotate, flip):
     """
     Augment transition data to buffer
@@ -440,17 +555,29 @@ def augmentData2Buffer(buffer, d, rzs, aug_n, rotate, flip):
                                                       ['p', 'x', 'y', 'z', 'r'])
 
     for _ in range(aug_n):
-        obs, next_obs, _, (trans_pixel,), transform_params = \
-            perturbBoundingAction(d.obs[0].clone(),
-                                  d.next_obs[0].clone(),
-                                  [d.action[:2].clone().numpy()],
-                                  set_theta_zero=not rotate,
-                                  theta_dis_n=theta_dis_n)
+        print("aug_n",_)
+        if len(d.obs[0].shape) == 2:
+            obs, next_obs, _, (trans_pixel,), transform_params = \
+                perturbBoundingAction(d.obs[0].clone(),
+                                    d.next_obs[0].clone(),
+                                    [d.action[:2].clone().numpy()],
+                                    set_theta_zero=not rotate,
+                                    theta_dis_n=theta_dis_n)
+        elif len(d.obs[0].shape) == 3:
+            obs, next_obs, _, (trans_pixel,), transform_params = \
+                perturbBoundingAction1(d.obs[0].clone(),
+                                    d.next_obs[0].clone(),
+                                    [d.action[:2].clone().numpy()],
+                                    set_theta_zero=not rotate,
+                                    theta_dis_n=theta_dis_n)
+        assert obs.shape == d.obs[0].shape
+        
+        print("here0.005")
         action_theta = d.action[rot_idx].clone()
         trans_theta, _, _ = transform_params
         action_theta -= (trans_theta / dtheta).round().long()
         action_theta %= num_rz
-
+        print("here0.01")
         if z_idx == -1:
             trans_action = torch.tensor([trans_pixel[0], trans_pixel[1], action_theta])
         elif z_idx != -1:
@@ -461,8 +588,12 @@ def augmentData2Buffer(buffer, d, rzs, aug_n, rotate, flip):
             trans_action[rot_idx] = action_theta.item()
 
         if flip and np.random.random() > 0.5:
-            flipped_obs = np.flip(obs, 0)
-            flipped_next_obs = np.flip(next_obs, 0)
+            if len(obs.shape) == 2:
+                flipped_obs = np.flip(obs, 0)
+                flipped_next_obs = np.flip(next_obs, 0)
+            elif len(obs.shape) == 3:
+                flipped_obs = np.flip(obs, 1)
+                flipped_next_obs = np.flip(next_obs, 1)
             flipped_xy = trans_pixel.copy()
             flipped_xy[0] = action_pixel_range - 1 - flipped_xy[0]
             flipped_theta = action_theta.clone()

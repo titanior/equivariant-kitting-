@@ -320,6 +320,8 @@ class EquResUReg(torch.nn.Module):
 
         self.df_channel = df_channel
 
+
+        print("+++++++++++++++++++++++++++++++++++++++++++++++++input channel:",n_input_channel)
         # the main unet path
         self.unet = EquResUNet(n_input_channel=n_input_channel, n_output_channel=self.df_channel,
                                n_middle_channels=n_middle_channels,

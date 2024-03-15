@@ -171,10 +171,10 @@ else:
                             [0, 0 + workspace_size]])
     safe_z_region = 1 / 4
     pixel_size = workspace_size / heightmap_size
-    lr = 2e-3
+    lr = 1e-3
     training_iters = 1
     patch_size = 32
-    num_rotations = 32
+    num_rotations = 8
 
 
 num_primitives = 2

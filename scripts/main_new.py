@@ -50,6 +50,7 @@ def getCurrentObs(in_hand, obs):
     obss = []
     for i, o in enumerate(obs):
         obss.append((o.squeeze(), in_hand[i].squeeze()))
+    print("o.squeeze()",o.squeeze().shape)
     return obss
 
 
@@ -98,11 +99,12 @@ def evaluate(envs, agent, logger):
     with torch.no_grad():
         while eval_steps < num_eval_episodes:
             obs__ = envs.reset(collection=False)
-            cmap, hmap = utils_.get_fused_heightmap(
-                    obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
-            obs = torch.tensor(hmap[:160,:])
-            obs = torch.unsqueeze(obs, 0)  
-            obs = torch.unsqueeze(obs, 1)  
+            # cmap, hmap = utils_.get_fused_heightmap(
+            #         obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+            # obs = torch.tensor(hmap[:160,:])
+            # obs = torch.unsqueeze(obs, 0)  
+            # obs = torch.unsqueeze(obs, 1)  
+            obs = change_obs_formation(obs__,use_rgb = args.use_rgb)
             print("obs:",obs.shape)
             states = torch.tensor([0])
             in_hands = torch.zeros((1,1,32,32))
@@ -121,12 +123,13 @@ def evaluate(envs, agent, logger):
             act["pose0"] = (np.array([x, y , 0.07]),np.array(angle))
             act["pose1"] = (np.array([x + 0.02, y , 0.07]),np.array([-0.       ,  0.       , -0.5      , -0.8660254]))
             obs__, reward, done, info = envs.step_new(act)
-            cmap, hmap = utils_.get_fused_heightmap(
-            obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
-            obs_ = torch.tensor(hmap[:160,:])
-            # obs_ = torch.zeros((160,160))
-            obs_ = torch.unsqueeze(obs_, 0)  # 添加一个维度，使其形状为 (1, 320, 160)
-            obs_ = torch.unsqueeze(obs_, 1)  # 添加一个维度，使其形状为 (1, 1, 320, 160)
+            obs_ = change_obs_formation(obs__ ,use_rgb= args.use_rgb)
+            # cmap, hmap = utils_.get_fused_heightmap(
+            # obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+            # obs_ = torch.tensor(hmap[:160,:])
+            # # obs_ = torch.zeros((160,160))
+            # obs_ = torch.unsqueeze(obs_, 0)  # 添加一个维度，使其形状为 (1, 320, 160)
+            # obs_ = torch.unsqueeze(obs_, 1)  # 添加一个维度，使其形状为 (1, 1, 320, 160)
             rewards = torch.tensor([reward])
             in_hands_ = torch.zeros((1,1,32,32))
             if done:
@@ -254,6 +257,48 @@ def collect_data(envs,agent,mode):
         eval_bar.close()
 
 
+def change_obs_formation(obs__,use_rgb = True):
+    """
+    更正观察量的格式
+    """
+    if use_rgb:
+        cmap, hmap = utils_.get_fused_heightmap(
+                obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+        
+        obs = torch.tensor(hmap[:160,:]) # (160,160)
+        # print("cmap shape:",cmap.shape)
+        obs_con = np.concatenate((cmap,hmap[..., None]), axis=2)
+        obs = torch.tensor(obs_con[:160,:,:])
+        # print("obs shape:",obs.shape)
+        # plt.imshow(cmap)
+        # print("hmap.shape",hmap.shape)
+        # print(obs[:,:,0:3].numpy())
+        # print("********************************")
+        # print(cmap[0:160,:,:])
+        # print("*********************************")
+        # print(cmap[:160,:,:]-obs[:,:,0:3].numpy())
+        # plt.show()
+        # plt.imshow(obs[:,:,0:3].numpy().astype(int))
+        # plt.show()
+        # plt.imshow(obs_con[:,:,0:3].astype(int))
+        # plt.show()
+        
+        obs = torch.unsqueeze(obs, 0).permute(0,3,1,2) # (1,160,160)
+        return obs
+    else:
+        cmap, hmap = utils_.get_fused_heightmap(
+            obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+        # 转换观察量，奖励的格式
+        
+        obs_ = torch.tensor(hmap[:160,:])
+        obs_ = torch.unsqueeze(obs_, 0)  
+        obs_ = torch.unsqueeze(obs_, 1) 
+        return obs_
+
+
+
+
+
 def train():
     
     params = {
@@ -307,19 +352,30 @@ def train():
     # setup buffer
     replay_buffer = QLearningBufferExpert(buffer_size)
 
-
+    # 初始化输入数据
+    # set up input data 
     obs__ = env.reset()
-    cmap, hmap = utils_.get_fused_heightmap(
-            obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
-    obs = torch.tensor(hmap[:160,:])
-    obs = torch.unsqueeze(obs, 0)  
-    obs = torch.unsqueeze(obs, 1)  
+    # cmap, hmap = utils_.get_fused_heightmap(
+    #         obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+    # obs = torch.tensor(hmap[:160,:]) # (160,160)
+    # print("cmap shape:",cmap.shape)
+    # obs_con = np.concatenate((cmap,hmap[Ellipsis, None]), axis=2)
+    # obs = torch.tensor(obs_con[:160,:,:])
+    # print("obs shape:",obs.shape)
+    # obs = torch.unsqueeze(obs, 0).permute(0,3,1,2) # (1,160,160)
+    # obs = torch.unsqueeze(obs, 1) # (1,1,160,160)
+    obs = change_obs_formation(obs__,use_rgb=args.use_rgb)
+    print("obs shape:",obs.shape)
     states = torch.tensor([0])
     in_hands = torch.zeros((1,1,in_hand_size,in_hand_size))
 
+    # 加载预训练模型
+    # load pretrained model  
     if load_sub:
         logger.loadCheckPoint(os.path.join(log_dir, load_sub, 'checkpoint'), env, agent, replay_buffer)
 
+    # 设置进度条
+    # set up pbar 
     if not no_bar:
         pbar = tqdm(total=max_episode)
         pbar.set_description('Episodes:0; Reward:0.0; Explore:0.0; Loss:0.0; Time:0.0')
@@ -327,44 +383,48 @@ def train():
 
     # the training loop
     while logger.num_episodes < max_episode:
-        print("train once—————————————————————————————————————————————————————————— ")
         gpu_usage = torch.cuda.max_memory_allocated(device=torch.cuda.current_device())
         print(f"GPU usage: {gpu_usage / 1024 / 1024} MB")
         eps = init_eps if logger.num_episodes < step_eps else final_eps
         is_expert = 0
         q_value_maps, actions_star_idx, actions_star, in_hand_obs = \
             agent.getBoltzmannActions(states, in_hands, obs, temperature=train_tau, eps=eps, return_patch=True)
-        print(44444444444444444444444444)
-        print("q_value_maps.shape",q_value_maps[0].shape)
+        
+        # print("q_value_maps.shape",q_value_maps[0].shape)
+        # 获取成功概率热图
         q_map1 = q_value_maps[0]
         plt.subplot(1, 2, 1)
         q_map1 = q_map1.detach().numpy().squeeze(0)
-        plt.imshow(q_map1, cmap='gray')
+        plt.imshow(obs[0][0], cmap='gray')
         buffer_obs = getCurrentObs(in_hands, obs)
-        print("angle num-------------------------------------------",8*3.14/actions_star[0][2])
-        # actions_star = torch.cat((actions_star, states.unsqueeze(1)), dim=1)
+        # print("buffer_obs",buffer_obs[0])
+        # plt.subplot(1, 2, 2)
+        # plt.imshow(buffer_obs[0][0],cmap="gray")
+        # plt.show()
+        
+        # 把获取到的动作转为合适的格式
         x = actions_star[0][0]
         y = actions_star[0][1]
         angle = utils_.eulerXYZ_to_quatXYZW([0,0,actions_star[0][2]])
-        actions_star[0][2] = actions_star[0][2]*2
-        print("actions_star2",actions_star)
         act = dict()
         act["pose0"] = (np.array([x, y , 0.07]),np.array(angle))
-        act["pose1"] = (np.array([0.33741313, 0.14475863, 0.07]),np.array([-0.       ,  0.       , -0.5      , -0.8660254]))
+        act["pose1"] = (np.array([0.33741313, 0.14475863, 0.07]),np.array([-0. , 0. , -0.5 , -0.8660254]))
+        
+        # 执行动作 获取结果
         obs__, reward, done, info = env.step_new(act)
-        cmap, hmap = utils_.get_fused_heightmap(
-            obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
-        # image = hmap.squeeze(0)
-        # image = image.squeeze(0)
-        # 显示图像
-        plt.subplot(1, 2, 2)
-        plt.imshow(hmap[:160,:], cmap='gray')
-        # plt.show()
+        # cmap, hmap = utils_.get_fused_heightmap(
+        #     obs__, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+        # # 显示图像
+        # plt.subplot(1, 2, 2)
+        # plt.imshow(hmap[:160,:], cmap='gray')
+        # # plt.show()
 
-        obs_ = torch.tensor(hmap[:160,:])
-        # obs_ = torch.zeros((160,160))
-        obs_ = torch.unsqueeze(obs_, 0)  # 添加一个维度，使其形状为 (1, 320, 160)
-        obs_ = torch.unsqueeze(obs_, 1)  # 添加一个维度，使其形状为 (1, 1, 320, 160)
+
+        # # 转换观察量，奖励的格式
+        # obs_ = torch.tensor(hmap[:160,:])
+        # obs_ = torch.unsqueeze(obs_, 0)  
+        # obs_ = torch.unsqueeze(obs_, 1)  
+        obs_ = change_obs_formation(obs__,use_rgb=args.use_rgb)
         rewards = torch.tensor([reward])
         in_hands_ = torch.zeros((1,1,in_hand_size,in_hand_size))
         if done:
@@ -375,29 +435,22 @@ def train():
         print("dones:",dones)
         print("rewards:",rewards)
         states_ = torch.tensor([0])
-        # states_, in_hands_, obs_, rewards, dones = env.step()
         steps_lefts = torch.tensor([1])
 
         print("obs:",obs_.shape)
         print("actions_star3:",actions_star)
         print("states_:",states_)
         
-        # # 将张量转换为图像
-        # image = obs.detach().numpy().squeeze(0)
-        # image = image.squeeze(0)
-        # # 显示图像
-        # plt.imshow(image, cmap='gray')
-        # plt.show()
-
         done_idxes = torch.nonzero(dones).squeeze(1)
         if done_idxes.shape[0] != 0:
             reset_obs_ = env.reset()
-            cmap, hmap = utils_.get_fused_heightmap(
-            reset_obs_, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
-            reset_obs_ = torch.tensor(hmap[:160,:])
-            # reset_obs_ = torch.zeros((160,160))
-            reset_obs_ = torch.unsqueeze(reset_obs_, 0)  # 添加一个维度，使其形状为 (1, 320, 160)
-            reset_obs_ = torch.unsqueeze(reset_obs_, 1)  # 添加一个维度，使其形状为 (1, 1, 320, 160)
+            # cmap, hmap = utils_.get_fused_heightmap(
+            # reset_obs_, cameras.RealSenseD415.CONFIG, np.array([[0.25, 0.75], [-0.5, 0.5], [0, 0.28]]), 0.003125)
+            # reset_obs_ = torch.tensor(hmap[:160,:])
+            # # reset_obs_ = torch.zeros((160,160))
+            # reset_obs_ = torch.unsqueeze(reset_obs_, 0)  
+            # reset_obs_ = torch.unsqueeze(reset_obs_, 1)  
+            reset_obs_ = change_obs_formation(reset_obs_,use_rgb=args.use_rgb)
             reset_states_ = torch.tensor([0])
             reset_in_hands_ = torch.zeros((1,1,in_hand_size,in_hand_size))
             for j, idx in enumerate(done_idxes):
@@ -405,33 +458,31 @@ def train():
                 in_hands_[idx] = reset_in_hands_[j]
                 obs_[idx] = reset_obs_[j]
 
-        # if render:
-        # yw: no use for now
-        # if render and not rewards.item():
-        #     plot_action(obs, agent, actions_star, actions_star_idx, q_value_maps, num_rotations,
-        #                 patch_size, rewards, in_hand_obs, action_sequence)
-
         buffer_obs_ = getCurrentObs(in_hands_, obs_)
         print("steps_lefts",steps_lefts)
         if not fixed_buffer:
             for i in range(num_processes):
                 data = ExpertTransition(states[i], buffer_obs[i], actions_star_idx[i], rewards[i], states_[i],
                                             buffer_obs_[i], dones[i], steps_lefts[i], torch.tensor(is_expert))
+                print("here0.1")
                 augmentData2Buffer(replay_buffer, data, agent.rzs,
                                    onpolicy_data_aug_n, onpolicy_data_aug_rotate, onpolicy_data_aug_flip)
-
+                print("here0.2")
         logger.stepBookkeeping(rewards.numpy(), steps_lefts.numpy(), dones.numpy())
+        print("here1")
 
+        # 训练
         if logger.num_episodes >= training_offset:
             for training_iter in range(training_iters):
                 SGD_start = time.time()
                 train_step(agent, replay_buffer, logger)
                 logger.SGD_time.append(time.time() - SGD_start)
 
+        print("here2")
         states = copy.copy(states_)
         obs = copy.copy(obs_)
         in_hands = copy.copy(in_hands_)
-
+        print("here3")
         if not no_bar:
             timer_final = time.time()
             description = 'Steps:{}; Reward:{:.03f}; Eval Reward:{:.03f}; Explore:{:.03f}; Loss:{:.03f}; Time:{:.03f}'.format(
@@ -442,11 +493,11 @@ def train():
             timer_start = timer_final
             pbar.update(logger.num_episodes - pbar.n)
         logger.num_steps += num_processes
-
+        print("here4")
         if logger.num_training_steps > 0 and logger.num_episodes % eval_freq == eval_freq - 1:
             evaluate(eval_envs, agent, logger)
             agent.writer.add_scalar('evaluate_reward', logger.eval_rewards[-1], logger.num_episodes)
-
+        print("here5")
         
         if (logger.num_episodes + 1) % (max_episode // num_saves) == 0 and logger.eval_rewards[-1] > best_reward:
             best_reward = logger.eval_rewards[-1]
@@ -461,9 +512,7 @@ def train():
         
         agent.writer.add_scalar('window50_reward', logger.getCurrentAvgReward(learning_curve_avg_window), logger.num_episodes)
 
-        
-    
-    # saveModelAndInfo(logger, agent)
+    # 储存可调参数
     logger.saveCheckPoint(args, env, agent, replay_buffer)
     with open("./log/" + "params.json", "w") as f:
         json.dump(params, f)
@@ -481,7 +530,7 @@ if __name__ == '__main__':
         agent.train()
         agent.loadModel(load_model_pre)
         env_config['render'] = True 
-        # eval_envs = EnvWrapper(eval_num_processes, simulator, env, env_config, planner_config)
+        
         enc_cls = Environment 
         env = enc_cls('./raven/assets/',
                         disp=True,
